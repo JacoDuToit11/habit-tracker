@@ -1,7 +1,3 @@
-from dotenv import load_dotenv
-
-load_dotenv() # Load environment variables from .env file
-
 import streamlit as st
 import pandas as pd
 import os
@@ -9,40 +5,6 @@ from datetime import date
 
 # Configuration
 HABITS_FILE = 'habits.csv'
-# Load password from environment variable
-PASSWORD = os.getenv("HABIT_TRACKER_PASSWORD")
-
-# Check if password environment variable is set
-if not PASSWORD:
-    st.error("Password environment variable (HABIT_TRACKER_PASSWORD) not set.")
-    st.stop() # Stop the app if password is not configured
-
-# --- Authentication ---
-def check_password():
-    """Returns `True` if the user had the correct password."""
-
-    if "password_entered" not in st.session_state:
-        # First run, show input for password.
-        st.text_input("Password", type="password", key="password")
-        st.button("Login", on_click=password_entered)
-        return False
-    elif not st.session_state["password_entered"]:
-        # Password not correct, show input + error.
-        st.text_input("Password", type="password", key="password")
-        st.button("Login", on_click=password_entered)
-        st.error("😕 Password incorrect")
-        return False
-    else:
-        # Password correct.
-        return True
-
-def password_entered():
-    """Checks whether a password entered by the user is correct."""
-    if st.session_state["password"] == PASSWORD:
-        st.session_state["password_entered"] = True
-        del st.session_state["password"]  # Don't store password.
-    else:
-        st.session_state["password_entered"] = False
 
 # --- Data Handling ---
 def load_habit_data():
@@ -108,55 +70,58 @@ def ensure_today_exists(df):
 
 # --- App Logic ---
 st.set_page_config(page_title="Habit Tracker", layout="wide")
+st.title("✅ Habit Tracker")
 
-if check_password():
-    st.title("✅ Habit Tracker")
+# Load data
+habits_df = load_habit_data()
 
-    # Load data
-    habits_df = load_habit_data()
+# Ensure today's date row exists
+habits_df = ensure_today_exists(habits_df)
 
-    # Ensure today's date row exists
-    habits_df = ensure_today_exists(habits_df)
+# Add new habit section
+st.sidebar.header("Manage Habits")
+new_habit_name = st.sidebar.text_input("Add New Habit")
+if st.sidebar.button("Add Habit"):
+    habits_df = add_habit(new_habit_name, habits_df)
+    save_habit_data(habits_df) # Save immediately after adding
+    st.rerun() # Rerun to update the columns immediately
 
-    # Add new habit section
-    st.sidebar.header("Manage Habits")
-    new_habit_name = st.sidebar.text_input("Add New Habit")
-    if st.sidebar.button("Add Habit"):
-        habits_df = add_habit(new_habit_name, habits_df)
-        save_habit_data(habits_df) # Save immediately after adding
+# Display Habits for Today
+st.header(f"Today's Habits ({date.today().strftime('%Y-%m-%d')})")
 
-    # Display Habits for Today
-    st.header(f"Today's Habits ({date.today().strftime('%Y-%m-%d')})")
+today_str = date.today().strftime('%Y-%m-%d')
+today_index = habits_df[habits_df['Date'] == today_str].index
 
-    today_str = date.today().strftime('%Y-%m-%d')
-    today_index = habits_df[habits_df['Date'] == today_str].index
+if not today_index.empty:
+    today_index = today_index[0] # Get the first index if multiple (shouldn't happen)
+    habit_cols = [col for col in habits_df.columns if col != 'Date']
 
-    if not today_index.empty:
-        today_index = today_index[0] # Get the first index if multiple (shouldn't happen)
-        habit_cols = [col for col in habits_df.columns if col != 'Date']
-
-        if not habit_cols:
-            st.info("No habits added yet. Add some using the sidebar!")
-        else:
-            cols = st.columns(len(habit_cols))
-            updated = False
-            for i, habit in enumerate(habit_cols):
-                with cols[i]:
-                    # Ensure the value fetched is explicitly boolean for checkbox
-                    current_value = bool(habits_df.loc[today_index, habit])
-                    checked = st.checkbox(habit, value=current_value, key=f"{habit}_{today_str}")
-                    if checked != current_value:
-                        habits_df.loc[today_index, habit] = checked
-                        updated = True
-
-            if updated:
-                save_habit_data(habits_df)
-                # Optional: Rerun to reflect immediate save feedback, though usually not necessary
-                # st.rerun()
+    if not habit_cols:
+        st.info("No habits added yet. Add some using the sidebar!")
     else:
-        st.error("Could not find or create today's row. Please check "+ HABITS_FILE)
+        cols = st.columns(len(habit_cols))
+        updated = False
+        for i, habit in enumerate(habit_cols):
+            with cols[i]:
+                # Ensure the value fetched is explicitly boolean for checkbox
+                # Handle potential non-boolean values gracefully (e.g., from manual CSV edits)
+                try:
+                    current_value = bool(habits_df.loc[today_index, habit])
+                except ValueError:
+                    current_value = False # Default to False if conversion fails
+                
+                checked = st.checkbox(habit, value=current_value, key=f"{habit}_{today_str}")
+                if checked != current_value:
+                    habits_df.loc[today_index, habit] = checked
+                    updated = True
+
+        if updated:
+            save_habit_data(habits_df)
+            # No rerun needed here, checkbox updates state automatically
+else:
+    st.error("Could not find or create today's row. Please check "+ HABITS_FILE)
 
 
-    # Display Raw Data (Optional)
-    st.subheader("All Habit Data")
+# Display Raw Data (Optional)
+with st.expander("Show All Habit Data"):
     st.dataframe(habits_df)
